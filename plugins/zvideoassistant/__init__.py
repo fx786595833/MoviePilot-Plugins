@@ -77,7 +77,7 @@ class ZvideoAssistant(_PluginBase):
             self._use_douban_score = config.get("use_douban_score")
             self._use_tmdb_score = config.get("use_tmdb_score")
             self._douban_helper = DoubanHelper(user_cookie=self._cookie)
-            self._score_helper = ScoreHelper()
+            self._score_helper = ScoreHelper(apikey=self._apikey)
 
         # 获取历史数据
         self._cached_data = (
