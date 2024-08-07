@@ -16,7 +16,6 @@ class ScoreHelper:
         self.apikey = apikey
 
     def get_douban_score(self, douban_id: str = None, title: str = None) -> float | None:
-        # data = {"apikey": "0ab215a8b1977939201640fa14c66bab"}
         data = {"apikey": self.apikey}
 
         response = RequestUtils(headers=self.headers).post_res(
