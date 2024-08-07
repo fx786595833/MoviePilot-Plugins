@@ -9,10 +9,12 @@ import pytz
 from app.core.config import settings
 from app.core.event import eventmanager, Event
 from app.log import logger
+from app.modules.themoviedb.tmdbapi import TmdbApi
 from app.plugins import _PluginBase
 from app.plugins.zvideoassistant.DoubanHelper import *
 from app.plugins.zvideoassistant.ScoreHelper import *
 from app.schemas.types import EventType, NotificationType
+from app.schemas.types import MediaType
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -31,7 +33,7 @@ class ZvideoAssistant(_PluginBase):
     # 插件图标
     plugin_icon = "zvideo.png"
     # 插件版本
-    plugin_version = "1.1"
+    plugin_version = "1.2"
     # 插件作者
     plugin_author = "fx786595833"
     # 作者主页
@@ -59,6 +61,7 @@ class ZvideoAssistant(_PluginBase):
     _cookie = ""
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
+    tmdb: TmdbApi = None
 
     def init_plugin(self, config: dict = None):
         # 停止现有任务
@@ -78,6 +81,7 @@ class ZvideoAssistant(_PluginBase):
             self._use_tmdb_score = config.get("use_tmdb_score")
             self._douban_helper = DoubanHelper(user_cookie=self._cookie)
             self._score_helper = ScoreHelper(apikey=self._apikey)
+            self.tmdb = TmdbApi()
 
         # 获取历史数据
         self._cached_data = (
@@ -451,9 +455,12 @@ class ZvideoAssistant(_PluginBase):
                     logger.info(f"更新豆瓣评分：{title} {score}")
                     message += f"{title} 更新豆瓣评分：{score}\n"
                 else:
-                    logger.error(f"未找到豆瓣评分：{title} {douban_id}")
                     if fallback_to_tmdb:
                         logger.info(f"未找到豆瓣评分：{title} {douban_id},启用tmdb评分")
+                        meta_info_dict = self.fallback_to_use_tmdb(meta_info_dict, message)
+                    else:
+                        logger.debug(f"未找到豆瓣评分：{title} {douban_id}")
+                        continue
             else:
                 logger.info(
                     f"已存在豆瓣评分：{meta_info_dict['title']} {meta_info_dict['douban_score']}"
@@ -499,15 +506,105 @@ class ZvideoAssistant(_PluginBase):
             conn.close()
         logger.info("更新极影视为豆瓣评分...")
 
+    def fallback_to_use_tmdb(self, meta_info_dict: Dict, message: str) -> Dict:
+        if meta_info_dict.get("custom_tmdb_score") == None:
+            tmdb_id = meta_info_dict["relation"]["tmdb"]["tmdb_id"]
+            title = meta_info_dict["title"]
+            type = meta_info_dict["type"]
+            # 100代表电影，200代表电视剧
+            tmdb_info = {}
+            if type == 100:
+                tmdb_info = self.tmdb.get_info(mtype=MediaType.MOVIE, tmdbid=tmdb_id)
+            elif type == 200:
+                tmdb_info = self.tmdb.get_info(mtype=MediaType.TV, tmdbid=tmdb_id)
+            else:
+                logger.error(f"未知type类型：title={title} tmdbid={tmdb_id} type={type}")
+                return meta_info_dict
+
+            if tmdb_info.get("vote_average") == None:
+                logger.error(f"未找到tmdb评分，tmdb_info={tmdb_info}")
+                return meta_info_dict
+            else:
+                score = tmdb_info["vote_average"]
+                meta_info_dict["custom_tmdb_score"] = score
+                logger.info(f"更新tmdb评分：{title} {score}")
+                message += f"{title} 更新tmdb评分：{score}\n"
+        else:
+            logger.info(f"已存在tmdb评分：{meta_info_dict['title']} {meta_info_dict['custom_tmdb_score']}")
+        return meta_info_dict
+
+    def fill_tmdb_score(self):
+        logger.info("获取tmdb评分...")
+        conn = sqlite3.connect(self._db_path)
+        # 使用UTF-8编码处理文本
+        conn.text_factory = str
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, extend_type, meta_info FROM zvideo_collection")
+        rows = cursor.fetchall()
+        message = ""
+        for row in rows:
+            rowid, extend_type, meta_info_json = row
+            # 合集，不处理
+            if extend_type == 7:
+                continue
+            meta_info_dict = json.loads(meta_info_json)
+            # 如果meta_info为空，跳过
+            if meta_info_dict.get("custom_tmdb_score") == None:
+                tmdb_id = meta_info_dict["relation"]["tmdb"]["tmdb_id"]
+                title = meta_info_dict["title"]
+                type = meta_info_dict["type"]
+                # 100代表电影，200代表电视剧
+                tmdb_info = {}
+                if type == 100:
+                    tmdb_info = self.tmdb.get_info(mtype=MediaType.MOVIE, tmdbid=tmdb_id)
+                elif type == 200:
+                    tmdb_info = self.tmdb.get_info(mtype=MediaType.TV, tmdbid=tmdb_id)
+                else:
+                    logger.error(f"未知type类型：title={title} tmdbid={tmdb_id} type={type}")
+                    continue
+
+                if tmdb_info.get("vote_average") == None:
+                    logger.error(f"未找到tmdb评分，tmdb_info={tmdb_info}")
+                    continue
+                else:
+                    score = tmdb_info["vote_average"]
+                    meta_info_dict["custom_tmdb_score"] = score
+                    logger.info(f"更新tmdb评分：{title} {score}")
+                    message += f"{title} 更新tmdb评分：{score}\n"
+            else:
+                logger.info(f"已存在tmdb评分：{meta_info_dict['title']} {meta_info_dict['custom_tmdb_score']}")
+                continue
+
+            # 使用ensure_ascii=False来保持中文字符不变
+            updated_meta_info_json = json.dumps(meta_info_dict, ensure_ascii=False)
+            cursor.execute(
+                "UPDATE zvideo_collection SET meta_info = ? WHERE id = ?",
+                (updated_meta_info_json, rowid),
+            )
+            conn.commit()
+        if self._notify and len(message) > 0:
+            self.post_message(
+                mtype=NotificationType.SiteMessage,
+                title="【极影视助手】",
+                text=message,
+            )
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
     def use_tmdb_score(self):
         logger.info("使用tmdb评分...")
+        self.fill_tmdb_score()
         conn = sqlite3.connect(self._db_path)
         cursor = conn.cursor()
         # 将meta_info的score值同步到zvideo_collection表的score列
         cursor.execute(
             """
             UPDATE zvideo_collection
-            SET meta_info = JSON_SET(meta_info, '$.score', CAST(score AS JSON))
+            SET meta_info = JSON_SET(meta_info, '$.score', CAST(JSON_EXTRACT(meta_info, '$.custom_tmdb_score') AS JSON))
+            WHERE CAST(JSON_EXTRACT(meta_info, '$.custom_tmdb_score') AS DECIMAL(3,1)) <> 0.0
             """
         )
         conn.commit()
