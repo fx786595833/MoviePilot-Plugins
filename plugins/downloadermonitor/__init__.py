@@ -89,7 +89,7 @@ class DownloaderMonitor(_PluginBase):
                 "cron": self._cron,
                 "enabled": self._enabled,
                 "notify": self._notify,
-                "map_path": self._db_path,
+                "map_path": self._map_path,
                 "mark": self._mark,
             }
         )
