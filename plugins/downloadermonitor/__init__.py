@@ -210,6 +210,19 @@ class DownloaderMonitor(_PluginBase):
                                     {
                                         "component": "VSwitch",
                                         "props": {
+                                            "model": "onlyonce",
+                                            "label": "立即运行一次",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
                                             "model": "mark",
                                             "label": "仅打上标记",
                                         },
