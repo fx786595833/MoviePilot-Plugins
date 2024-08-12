@@ -17,11 +17,12 @@
         "name": "下载器监控器",
         "description": "监控源文件删除后自动删除种子",
         "labels": "下载管理",
-        "version": "1.0",
+        "version": "1.1",
         "icon": "torrent.png",
         "author": "fx786595833",
         "level": 1,
         "history": {
+            "v1.1": "支持监控源文件删除时排除指定标签的种子",
             "v1.0": "支持监控源文件删除后自动删除种子"
         }
     }

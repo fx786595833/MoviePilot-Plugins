@@ -24,7 +24,7 @@ class DownloaderMonitor(_PluginBase):
     # 插件图标
     plugin_icon = "torrent.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     # 插件作者
     plugin_author = "fx786595833"
     # 作者主页
@@ -46,6 +46,7 @@ class DownloaderMonitor(_PluginBase):
     # 定时器
     _scheduler: Optional[BackgroundScheduler] = None
     _qbittorrent = None
+    _tags = ""
 
     def init_plugin(self, config: dict = None):
         # 停止现有任务
@@ -59,6 +60,7 @@ class DownloaderMonitor(_PluginBase):
             self._map_path = config.get("map_path")
             self._qbittorrent = Qbittorrent()
             self._mark = config.get("mark")
+            self._tags = config.get("tags")
 
         # 加载模块
         if self._onlyonce:
@@ -91,6 +93,7 @@ class DownloaderMonitor(_PluginBase):
                 "notify": self._notify,
                 "map_path": self._map_path,
                 "mark": self._mark,
+                "tags": self._tags,
             }
         )
 
@@ -134,6 +137,28 @@ class DownloaderMonitor(_PluginBase):
         if error:
             logger.error("无法连接qbittorrent下载器")
         if torrents:
+            tags_to_exclude = set()
+            # 如果 delete_except_tags 非空且不是纯空白，则添加到排除列表中
+            if self._tags and self._tags.strip():
+                tags_to_exclude.update(tag.strip() for tag in self._tags.split(','))
+
+            # 如果标签不为空，过滤对应标签的种子
+            if tags_to_exclude:
+                pre_filter_count = len(torrents)  # 获取过滤前的任务数量
+                torrents = self.__filter_torrents_by_tag(torrents, tags_to_exclude)
+                post_filter_count = len(torrents)  # 获取过滤后的任务数量
+                excluded_count = pre_filter_count - post_filter_count  # 计算被排除的任务数量
+                logger.info(
+                    f"有效种子数 {pre_filter_count}，排除标签 '{self._tags}' 后，"
+                    f"剩余种子数 {post_filter_count}，排除种子数 {excluded_count}")
+            else:
+                logger.info("没有配置有效的排除标签，所有种子均参与后续处理")
+
+            # 种子删除检查
+            if not torrents:
+                logger.info("没有需要检查的种子，跳过")
+                return
+
             for torrent in torrents:
                 save_path = torrent["save_path"]
                 torrent_name = torrent["name"]
@@ -168,6 +193,26 @@ class DownloaderMonitor(_PluginBase):
                 title="【下载器监控器】",
                 text=message,
             )
+
+    def __filter_torrents_by_tag(self, torrents: List[Any], exclude_tags: set) -> List[Any]:
+        """
+        根据标签过滤torrents"
+        """
+        # 如果排除标签字符串为空，则返回原始列表
+        if not exclude_tags:
+            return torrents
+
+        filter_torrents = []
+        for torrent in torrents:
+            # 使用 __get_label 方法获取每个 torrent 的标签列表
+            tags = torrent.get("tags")
+            labels = []
+            if tags:
+                labels = [str(tag).strip() for tag in tags.split(',')]
+            # 检查是否有任何一个排除标签存在于标签列表中
+            if not any(exclude in labels for exclude in exclude_tags):
+                filter_torrents.append(torrent)
+        return filter_torrents
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
         return [
@@ -225,6 +270,20 @@ class DownloaderMonitor(_PluginBase):
                                         "props": {
                                             "model": "mark",
                                             "label": "仅打上标记",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
+                                            "model": "tags",
+                                            "label": "删除排除标签",
+                                            "placeholder": "H&R,刷流",
                                         },
                                     }
                                 ],
